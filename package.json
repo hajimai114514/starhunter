@@ -1,0 +1,13 @@
+{
+  "name": "tic-tac-toe-online",
+  "version": "1.0.0",
+  "description": "双人联机井字棋（Node.js + Express + Socket.IO）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "4.18.2",
+    "socket.io": "4.7.2"
+  }
+}
