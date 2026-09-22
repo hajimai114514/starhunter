@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 移动端优先，适配竖屏和横屏 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>双人井字棋</title>
+  <!-- 使用官方 Socket.IO 客户端 -->
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    /* 全局样式，重置默认边距 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent; /* 去掉手机点击高亮 */
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #1e293b;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+      /* 避免双击缩放 */
+      touch-action: manipulation;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    h1 {
+      font-size: 28px;
+      letter-spacing: 2px;
+      color: #f8fafc;
+    }
+
+    /* 卡片式区块 */
+    .panel {
+      width: 100%;
+      background: #0f172a;
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    /* 输入框 */
+    input {
+      width: 100%;
+      padding: 14px;
+      font-size: 16px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #1e293b;
+      color: #f8fafc;
+      outline: none;
+    }
+    input:focus {
+      border-color: #3b82f6;
+    }
+
+    /* 按钮 */
+    button {
+      width: 100%;
+      padding: 14px;
+      font-size: 18px;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      background: #3b82f6;
+      color: #fff;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:active {
+      opacity: 0.8;
+    }
+    button:disabled {
+      background: #475569;
+      cursor: not-allowed;
+    }
+
+    /* 提示信息 */
+    .hint {
+      text-align: center;
+      font-size: 15px;
+      color: #94a3b8;
+      line-height: 1.6;
+      min-height: 24px;
+    }
+    .hint.error {
+      color: #f87171;
+      font-weight: bold;
+    }
+    .hint.success {
+      color: #4ade80;
+      font-weight: bold;
+    }
+
+    /* 状态栏 */
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+    .badge {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      background: #334155;
+    }
+    .badge.online {
+      background: #14532d;
+      color: #86efac;
+    }
+    .badge.offline {
+      background: #7f1d1d;
+      color: #fca5a5;
+    }
+
+    /* 玩家信息卡片 */
+    .players {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+    }
+    .player-card {
+      flex: 1;
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 12px;
+      text-align: center;
+      border: 2px solid transparent;
+    }
+    .player-card.active {
+      border-color: #3b82f6;
+    }
+    .player-card.offline-card {
+      opacity: 0.5;
+    }
+    .player-symbol {
+      font-size: 30px;
+      font-weight: bold;
+    }
+    .player-name {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+
+    /* 棋盘 */
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+      aspect-ratio: 1; /* 保证正方形，横竖屏都合适 */
+      max-width: 100%;
+    }
+    .cell {
+      background: #1e293b;
+      border: 2px solid #334155;
+      border-radius: 12px;
+      font-size: 56px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      aspect-ratio: 1;
+      transition: background 0.1s;
+      /* 优化手机触控 */
+      min-height: 0;
+    }
+    .cell:active {
+      background: #334155;
+    }
+    .cell.x {
+      color: #60a5fa;
+    }
+    .cell.o {
+      color: #f87171;
+    }
+    /* 获胜的三连格子高亮 */
+    .cell.win {
+      background: #14532d;
+      border-color: #4ade80;
+    }
+
+    /* 重开按钮区 */
+    .restart-area {
+      width: 100%;
+    }
+
+    /* 隐藏 */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>双人井字棋</h1>
+
+    <!-- 登录面板：昵称 + 房间号 + 加入按钮 -->
+    <div id="loginPanel" class="panel">
+      <input id="nameInput" type="text" placeholder="输入昵称" maxlength="12" autocomplete="off">
+      <input id="roomInput" type="text" placeholder="输入房间号" maxlength="20" autocomplete="off">
+      <button id="joinBtn">加入房间</button>
+      <div id="loginHint" class="hint">输入同一个房间号即可联机对战</div>
+    </div>
+
+    <!-- 游戏面板 -->
+    <div id="gamePanel" class="hidden">
+      <!-- 在线状态 + 我的符号 -->
+      <div class="status-row">
+        <span id="onlineBadge" class="badge offline">连接中…</span>
+        <span class="badge">我的符号：<span id="mySymbol">-</span></span>
+      </div>
+
+      <!-- 玩家卡片 -->
+      <div id="players" class="players"></div>
+
+      <!-- 轮到谁 / 等待提示 -->
+      <div id="turnHint" class="hint"></div>
+
+      <!-- 胜负 / 平局提示 -->
+      <div id="resultHint" class="hint"></div>
+
+      <!-- 棋盘 -->
+      <div id="board" class="board"></div>
+
+      <!-- 重开按钮 -->
+      <div class="restart-area">
+        <button id="restartBtn">重开一局</button>
+      </div>
+      <div id="restartHint" class="hint"></div>
+    </div>
+  </div>
+
+  <script>
+    // client.js 逻辑内联在 index.html 中
+    (function () {
+      // ============ 前端连接（同源部署，不写 cloud.sandbox.v1.trae.cn / 端口号）============
+      const socket = io();
+
+      // ============ DOM 元素 ============
+      const loginPanel = document.getElementById('loginPanel');
+      const gamePanel = document.getElementById('gamePanel');
+      const nameInput = document.getElementById('nameInput');
+      const roomInput = document.getElementById('roomInput');
+      const joinBtn = document.getElementById('joinBtn');
+      const loginHint = document.getElementById('loginHint');
+      const onlineBadge = document.getElementById('onlineBadge');
+      const mySymbolEl = document.getElementById('mySymbol');
+      const playersEl = document.getElementById('players');
+      const turnHint = document.getElementById('turnHint');
+      const resultHint = document.getElementById('resultHint');
+      const boardEl = document.getElementById('board');
+      const restartBtn = document.getElementById('restartBtn');
+      const restartHint = document.getElementById('restartHint');
+
+      // ============ 本地状态 ============
+      // localStorage 保存 clientId，用于断线重连恢复身份
+      const CLIENT_ID_KEY = 'tic_tac_toe_client_id';
+      let clientId = localStorage.getItem(CLIENT_ID_KEY);
+      if (!clientId) {
+        clientId = generateId();
+        localStorage.setItem(CLIENT_ID_KEY, clientId);
+      }
+
+      let mySymbol = null;          // 我自己的符号 X 或 O
+      let myName = '';
+      let currentGameState = null;  // 最近一次服务端下发的游戏状态
+      let joined = false;           // 是否已加入房间
+      let restartRequested = false; // 我是否已点过重开
+
+      // ============ 工具函数 ============
+      // 生成一个随机客户端 ID
+      function generateId() {
+        return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+      }
+
+      // 设置提示文字（可指定样式类型）
+      function setHint(el, text, type) {
+        el.textContent = text;
+        el.className = 'hint' + (type ? ' ' + type : '');
+      }
+
+      // ============ 构建棋盘 DOM ============
+      // 一次性生成 9 个格子
+      for (let i = 0; i < 9; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.index = i;
+        cell.addEventListener('click', () => {
+          // 点击格子时只发送落子请求，不修改本地棋盘
+          socket.emit('move', { index: i });
+        });
+        boardEl.appendChild(cell);
+      }
+      const cells = boardEl.querySelectorAll('.cell');
+
+      // ============ 渲染函数（只根据服务端状态渲染）============
+      function render(state) {
+        currentGameState = state;
+        if (!state) return;
+
+        // 1. 更新在线状态
+        const online = socket.connected;
+        onlineBadge.textContent = online ? '在线' : '离线';
+        onlineBadge.className = 'badge ' + (online ? 'online' : 'offline');
+
+        // 2. 更新玩家卡片
+        renderPlayers(state);
+
+        // 3. 更新棋盘
+        renderBoard(state);
+
+        // 4. 更新回合提示
+        renderTurn(state);
+
+        // 5. 更新胜负 / 平局提示
+        renderResult(state);
+
+        // 6. 更新重开按钮状态
+        renderRestart(state);
+      }
+
+      // 渲染玩家卡片
+      function renderPlayers(state) {
+        playersEl.innerHTML = '';
+        const players = state.players || [];
+        for (const p of players) {
+          const card = document.createElement('div');
+          card.className = 'player-card';
+          // 当前回合高亮
+          if (!state.gameOver && p.symbol === state.turn) {
+            card.classList.add('active');
+          }
+          // 离线玩家淡化 + 标注
+          if (!p.online) {
+            card.classList.add('offline-card');
+          }
+
+          const symbolDiv = document.createElement('div');
+          symbolDiv.className = 'player-symbol';
+          symbolDiv.textContent = p.symbol;
+
+          const nameDiv = document.createElement('div');
+          nameDiv.className = 'player-name';
+          nameDiv.textContent = p.name + (p.online ? '' : '（离线）');
+
+          card.appendChild(symbolDiv);
+          card.appendChild(nameDiv);
+          playersEl.appendChild(card);
+        }
+      }
+
+      // 渲染棋盘
+      function renderBoard(state) {
+        const board = state.board || [];
+        // 计算获胜的三连格子，用于高亮
+        const winLine = findWinLine(board);
+        for (let i = 0; i < 9; i++) {
+          const cell = cells[i];
+          const value = board[i];
+          cell.textContent = value || '';
+          cell.className = 'cell';
+          if (value) {
+            cell.classList.add(value === 'X' ? 'x' : 'o');
+          }
+          // 高亮获胜三连
+          if (winLine && winLine.includes(i)) {
+            cell.classList.add('win');
+          }
+        }
+      }
+
+      // 判断获胜的三连格子（与服务端规则一致，仅用于前端高亮）
+      function findWinLine(board) {
+        const lines = [
+          [0, 1, 2], [3, 4, 5], [6, 7, 8],
+          [0, 3, 6], [1, 4, 7], [2, 5, 8],
+          [0, 4, 8], [2, 4, 6]
+        ];
+        for (const [a, b, c] of lines) {
+          if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+            return [a, b, c];
+          }
+        }
+        return null;
+      }
+
+      // 渲染回合提示
+      function renderTurn(state) {
+        if (!mySymbol) {
+          setHint(turnHint, '等待分配符号…');
+          return;
+        }
+        if (state.gameOver) {
+          setHint(turnHint, '本局已结束');
+          return;
+        }
+        const count = (state.players || []).length;
+        if (count < 2) {
+          setHint(turnHint, '等待对手加入…');
+          return;
+        }
+        const isMyTurn = state.turn === mySymbol;
+        setHint(turnHint, isMyTurn ? '轮到你了' : '等待对方落子', isMyTurn ? 'success' : '');
+      }
+
+      // 渲染胜负 / 平局提示
+      function renderResult(state) {
+        if (!state.gameOver) {
+          setHint(resultHint, '');
+          return;
+        }
+        if (state.isDraw) {
+          setHint(resultHint, '平局！', '');
+        } else if (state.winner) {
+          const isMe = state.winner === mySymbol;
+          setHint(resultHint, isMe ? '你赢了！🎉' : '你输了', isMe ? 'success' : 'error');
+        }
+      }
+
+      // 渲染重开按钮
+      function renderRestart(state) {
+        const votes = state.restartVotes || [];
+        restartRequested = mySymbol ? votes.includes(mySymbol) : false;
+        // 游戏结束才能重开
+        if (!state.gameOver) {
+          restartBtn.disabled = true;
+          setHint(restartHint, '');
+          return;
+        }
+        restartBtn.disabled = restartRequested;
+        if (restartRequested) {
+          setHint(restartHint, '已同意重开，等待对方…');
+        } else {
+          setHint(restartHint, '');
+        }
+      }
+
+      // ============ 加入房间 ============
+      function joinRoom() {
+        const name = nameInput.value.trim();
+        const roomId = roomInput.value.trim();
+        if (!name) {
+          setHint(loginHint, '请输入昵称', 'error');
+          return;
+        }
+        if (!roomId) {
+          setHint(loginHint, '请输入房间号', 'error');
+          return;
+        }
+        myName = name;
+        // 存昵称和房间号，方便下次自动填充
+        localStorage.setItem('tic_tac_toe_name', name);
+        localStorage.setItem('tic_tac_toe_room', roomId);
+        // 发起加入
+        socket.emit('join', { name, roomId, clientId });
+        setHint(loginHint, '正在加入房间…');
+      }
+
+      // ============ Socket.IO 事件监听 ============
+      // 连接成功
+      socket.on('connect', () => {
+        onlineBadge.textContent = '在线';
+        onlineBadge.className = 'badge online';
+        setHint(loginHint, '已连接，可以加入房间');
+        // 如果之前已加入，重连后自动重新加入原房间
+        if (joined && myName) {
+          socket.emit('join', { name: myName, roomId: currentRoomId(), clientId });
+        }
+      });
+
+      // 连接断开（断线重连由 socket.io 自动处理）
+      socket.on('disconnect', () => {
+        onlineBadge.textContent = '离线';
+        onlineBadge.className = 'badge offline';
+        if (joined) {
+          setHint(turnHint, '连接断开，正在重连…', 'error');
+        }
+      });
+
+      // 收到分配符号（定向，仅发给本人）
+      socket.on('assignedSymbol', (data) => {
+        mySymbol = data.symbol;
+        myName = data.name;
+        joined = true;
+        mySymbolEl.textContent = mySymbol;
+        // 切换到游戏界面
+        loginPanel.classList.add('hidden');
+        gamePanel.classList.remove('hidden');
+      });
+
+      // 收到游戏状态（每次变更都会收到）
+      socket.on('gameState', (state) => {
+        render(state);
+      });
+
+      // 对手离开（只发给房间内另一人）
+      socket.on('opponentLeft', (data) => {
+        setHint(turnHint, data.message || '对手已离开，等待重连', 'error');
+      });
+
+      // 收到错误提示
+      socket.on('error', (data) => {
+        const message = data.message || '出错了';
+        // 若还没加入成功，错误显示在登录框下方
+        if (!joined) {
+          setHint(loginHint, message, 'error');
+        } else {
+          // 已加入时，临时显示错误（如“还没轮到你”）
+          setHint(turnHint, message, 'error');
+          // 1.5 秒后恢复
+          setTimeout(() => {
+            if (currentGameState) render(currentGameState);
+          }, 1500);
+        }
+      });
+
+      // ============ 绑定按钮事件 ============
+      joinBtn.addEventListener('click', joinRoom);
+      nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') roomInput.focus(); });
+      roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
+
+      // 重开按钮：点击后发起重开请求
+      restartBtn.addEventListener('click', () => {
+        socket.emit('restart');
+      });
+
+      // ============ 页面加载时自动填充上次的昵称和房间号 ============
+      function initPrefill() {
+        const savedName = localStorage.getItem('tic_tac_toe_name');
+        const savedRoom = localStorage.getItem('tic_tac_toe_room');
+        if (savedName) nameInput.value = savedName;
+        if (savedRoom) roomInput.value = savedRoom;
+      }
+      initPrefill();
+
+      // 记录当前已加入的房间号（用于自动重连）
+      function currentRoomId() {
+        return roomInput.value.trim();
+      }
+    })();
+  </script>
+</body>
+</html>
