@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: tic-tac-toe-online
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
